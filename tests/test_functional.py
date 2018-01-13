@@ -1,60 +1,67 @@
 import glob
-import os
+from os import path, linesep, unlink, mkdir
 import re
 import tempfile
 import shutil
+import codecs
 
 from sphinx.application import Sphinx
+from unittest import skipIf
+from six import PY2
 
-from nose.tools import *
+_here = path.dirname(__file__)
+_fixturedir = path.join(_here, 'fixture')
+_fakecmd = path.join(_here, 'fakecmd.py')
+_fakeepstopdf = path.join(_here, 'fakeepstopdf.py')
 
-_fixturedir = os.path.join(os.path.dirname(__file__), 'fixture')
-_fakecmd = os.path.join(os.path.dirname(__file__), 'fakecmd.py')
-_fakeepstopdf = os.path.join(os.path.dirname(__file__), 'fakeepstopdf.py')
 
 def setup():
     global _tempdir, _srcdir, _outdir
     _tempdir = tempfile.mkdtemp()
-    _srcdir = os.path.join(_tempdir, 'src')
-    _outdir = os.path.join(_tempdir, 'out')
-    os.mkdir(_srcdir)
+    _srcdir = path.join(_tempdir, 'src')
+    _outdir = path.join(_tempdir, 'out')
+    mkdir(_srcdir)
+
 
 def teardown():
     shutil.rmtree(_tempdir)
 
+
 def readfile(fname):
-    f = open(os.path.join(_outdir, fname), 'rb')
-    try:
-        return f.read()
-    finally:
-        f.close()
+    with codecs.open(path.join(_outdir, fname), 'r', encoding='utf-8') as f:
+        raw = f.read()
+        print(raw)
+        filtered = [l for l in raw.splitlines() if not l.startswith('%%')]
+        print(filtered)
+        return linesep.join(filtered)
+
 
 def runsphinx(text, builder, confoverrides):
-    f = open(os.path.join(_srcdir, 'index.rst'), 'wb')
-    try:
-        f.write(text.encode('utf-8'))
-    finally:
-        f.close()
+    with codecs.open(path.join(_srcdir, 'index.rst'), 'wb', encoding='utf-8') as f:
+        f.write(text)
     app = Sphinx(_srcdir, _fixturedir, _outdir, _outdir, builder,
                  confoverrides)
     app.build()
 
+
 def with_runsphinx(builder, **kwargs):
     confoverrides = {'plantuml': _fakecmd}
     confoverrides.update(kwargs)
+
     def wrapfunc(func):
         def test():
             src = '\n'.join(l[4:] for l in func.__doc__.splitlines()[2:])
-            os.mkdir(_outdir)
+            mkdir(_outdir)
             try:
                 runsphinx(src, builder, confoverrides)
                 func()
             finally:
-                os.unlink(os.path.join(_srcdir, 'index.rst'))
+                unlink(path.join(_srcdir, 'index.rst'))
                 shutil.rmtree(_outdir)
         test.__name__ = func.__name__
         return test
     return wrapfunc
+
 
 @with_runsphinx('html', plantuml_output_format='svg')
 def test_buildhtml_simple_with_svg():
@@ -64,20 +71,21 @@ def test_buildhtml_simple_with_svg():
 
        Hello
     """
-    pngfiles = glob.glob(os.path.join(_outdir, '_images', 'plantuml-*.png'))
+    pngfiles = glob.glob(path.join(_outdir, '_images', 'plantuml-*.png'))
     assert len(pngfiles) == 1
-    svgfiles = glob.glob(os.path.join(_outdir, '_images', 'plantuml-*.svg'))
+    svgfiles = glob.glob(path.join(_outdir, '_images', 'plantuml-*.svg'))
     assert len(svgfiles) == 1
 
-    assert b'<img src="_images/plantuml' in readfile('index.html')
-    assert b'<object data="_images/plantuml' in readfile('index.html')
+    assert '<img src="_images/plantuml' in readfile('index.html')
+    assert '<object data="_images/plantuml' in readfile('index.html')
 
     pngcontent = readfile(pngfiles[0]).splitlines()
-    assert b'-pipe' in pngcontent[0]
-    assert_equals(b'Hello', pngcontent[1][2:])
+    assert '-pipe' in pngcontent[0]
+    assert 'Hello' in pngcontent[1][2:]
     svgcontent = readfile(svgfiles[0]).splitlines()
-    assert b'-tsvg' in svgcontent[0]
-    assert_equals(b'Hello', svgcontent[1][2:])
+    assert '-tsvg' in svgcontent[0]
+    assert 'Hello' in svgcontent[1][2:]
+
 
 @with_runsphinx('html')
 def test_buildhtml_samediagram():
@@ -91,11 +99,12 @@ def test_buildhtml_samediagram():
 
        Hello
     """
-    files = glob.glob(os.path.join(_outdir, '_images', 'plantuml-*.png'))
+    files = glob.glob(path.join(_outdir, '_images', 'plantuml-*.png'))
     assert len(files) == 1
     imgtags = [l for l in readfile('index.html').splitlines()
-               if b'<img src="_images/plantuml' in l]
+               if '<img src="_images/plantuml' in l]
     assert len(imgtags) == 2
+
 
 @with_runsphinx('html')
 def test_buildhtml_alt():
@@ -106,7 +115,8 @@ def test_buildhtml_alt():
 
        Hello
     """
-    assert b'alt="Foo &lt;Bar&gt;"' in readfile('index.html')
+    assert 'alt="Foo &lt;Bar&gt;"' in readfile('index.html')
+
 
 @with_runsphinx('html')
 def test_buildhtml_caption():
@@ -117,8 +127,9 @@ def test_buildhtml_caption():
 
        Hello
     """
-    assert (b'Caption with <strong>bold</strong> and <em>italic</em>'
+    assert ('Caption with <strong>bold</strong> and <em>italic</em>'
             in readfile('index.html'))
+
 
 @with_runsphinx('html')
 def test_buildhtml_nonascii():
@@ -128,10 +139,11 @@ def test_buildhtml_nonascii():
 
        \u3042
     """
-    files = glob.glob(os.path.join(_outdir, '_images', 'plantuml-*.png'))
+    files = glob.glob(path.join(_outdir, '_images', 'plantuml-*.png'))
     content = readfile(files[0]).splitlines()
-    assert b'-charset utf-8' in content[0]
-    assert_equals(u'\u3042', content[1][2:].decode('utf-8'))
+    assert '-charset utf-8' in content[0]
+    assert u'\u3042' == content[1][2:]
+
 
 @with_runsphinx('latex')
 def test_buildlatex_simple():
@@ -141,14 +153,15 @@ def test_buildlatex_simple():
 
        Hello
     """
-    files = glob.glob(os.path.join(_outdir, 'plantuml-*.png'))
+    files = glob.glob(path.join(_outdir, 'plantuml-*.png'))
     assert len(files) == 1
-    assert re.search(br'\\(sphinx)?includegraphics\{+plantuml-',
+    assert re.search(r'\\(sphinx)?includegraphics\{+plantuml-',
                      readfile('plantuml_fixture.tex'))
 
     content = readfile(files[0]).splitlines()
-    assert b'-pipe' in content[0]
-    assert_equals(b'Hello', content[1][2:])
+    assert '-pipe' in content[0]
+    assert 'Hello' == content[1][2:]
+
 
 @with_runsphinx('latex', plantuml_latex_output_format='eps')
 def test_buildlatex_simple_with_eps():
@@ -158,14 +171,15 @@ def test_buildlatex_simple_with_eps():
 
        Hello
     """
-    files = glob.glob(os.path.join(_outdir, 'plantuml-*.eps'))
+    files = glob.glob(path.join(_outdir, 'plantuml-*.eps'))
     assert len(files) == 1
-    assert re.search(br'\\(sphinx)?includegraphics\{+plantuml-',
+    assert re.search(r'\\(sphinx)?includegraphics\{+plantuml-',
                      readfile('plantuml_fixture.tex'))
 
     content = readfile(files[0]).splitlines()
-    assert b'-teps' in content[0]
-    assert_equals(b'Hello', content[1][2:])
+    assert '-teps' in content[0]
+    assert 'Hello' == content[1][2:]
+
 
 @with_runsphinx('latex', plantuml_latex_output_format='pdf')
 def test_buildlatex_simple_with_pdf():
@@ -175,16 +189,17 @@ def test_buildlatex_simple_with_pdf():
 
        Hello
     """
-    epsfiles = glob.glob(os.path.join(_outdir, 'plantuml-*.eps'))
-    pdffiles = glob.glob(os.path.join(_outdir, 'plantuml-*.pdf'))
+    epsfiles = glob.glob(path.join(_outdir, 'plantuml-*.eps'))
+    pdffiles = glob.glob(path.join(_outdir, 'plantuml-*.pdf'))
     assert len(epsfiles) == 1
     assert len(pdffiles) == 1
-    assert re.search(br'\\(sphinx)?includegraphics\{+plantuml-',
+    assert re.search(r'\\(sphinx)?includegraphics\{+plantuml-',
                      readfile('plantuml_fixture.tex'))
 
     epscontent = readfile(epsfiles[0]).splitlines()
-    assert b'-teps' in epscontent[0]
-    assert_equals(b'Hello', epscontent[1][2:])
+    assert '-teps' in epscontent[0]
+    assert 'Hello' == epscontent[1][2:]
+
 
 @with_runsphinx('latex')
 def test_buildlatex_with_caption():
@@ -196,9 +211,10 @@ def test_buildlatex_with_caption():
        Hello
     """
     out = readfile('plantuml_fixture.tex')
-    assert re.search(br'\\caption\{\s*Hello UML\s*\}', out)
-    assert re.search(br'\\begin\{figure\}\[htbp\]', out)
-    assert not re.search(br'\\begin\{flushNone', out)  # issue #136
+    assert re.search(r'\\caption\{\s*Hello UML\s*\}', out)
+    assert re.search(r'\\begin\{figure\}\[htbp\]', out)
+    assert not re.search(r'\\begin\{flushNone', out)  # issue #136
+
 
 @with_runsphinx('latex')
 def test_buildlatex_with_align():
@@ -210,9 +226,11 @@ def test_buildlatex_with_align():
        Hello
     """
     out = readfile('plantuml_fixture.tex')
-    assert (re.search(br'\\begin\{figure\}\[htbp\]\\begin\{flushright\}', out)
-            or re.search(br'\\begin\{wrapfigure\}\{r\}', out))
+    assert (re.search(r'\\begin\{figure\}\[htbp\]\\begin\{flushright\}', out)
+            or re.search(r'\\begin\{wrapfigure\}\{r\}', out))
 
+
+@skipIf(not PY2, "rst2pdf is not Python3 ready")
 @with_runsphinx('pdf')
 def test_buildpdf_simple():
     """Generate simple PDF
@@ -221,11 +239,11 @@ def test_buildpdf_simple():
 
        Hello
     """
-    epsfiles = glob.glob(os.path.join(_outdir, 'plantuml-*.eps'))
-    pdffiles = glob.glob(os.path.join(_outdir, 'plantuml-*.pdf'))
+    epsfiles = glob.glob(path.join(_outdir, 'plantuml-*.eps'))
+    pdffiles = glob.glob(path.join(_outdir, 'plantuml-*.pdf'))
     assert len(epsfiles) == 1
     assert len(pdffiles) == 1
 
     epscontent = readfile(epsfiles[0]).splitlines()
-    assert b'-teps' in epscontent[0]
-    assert_equals(b'Hello', epscontent[1][2:])
+    assert '-teps' in epscontent[0]
+    assert 'Hello' == epscontent[1][2:]

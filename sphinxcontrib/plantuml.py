@@ -8,7 +8,7 @@
     :copyright: Copyright 2010 by Yuya Nishihara <yuya@tcha.org>.
     :license: BSD, see LICENSE for details.
 """
-
+from __future__ import absolute_import
 import codecs
 import errno
 import hashlib
@@ -17,35 +17,34 @@ import re
 import shlex
 import subprocess
 
+from six.moves import map
+
 from docutils import nodes
 from docutils.parsers.rst import directives
 from docutils.parsers.rst import Directive
 from sphinx.errors import SphinxError
-from sphinx.util.osutil import (
-    ensuredir,
-    ENOENT,
-)
+from sphinx.util.osutil import ensuredir, ENOENT
+import os.path as osp
+import posixpath
+import sys
 
-try:
-    from PIL import Image
-except ImportError:
-    Image = None
+from PIL import Image
 
-try:
-    from sphinx.util.i18n import search_image_for_language
-except ImportError:  # Sphinx < 1.4
-    def search_image_for_language(filename, env):
-        return filename
+from sphinx.util.i18n import search_image_for_language
+
 
 class PlantUmlError(SphinxError):
     pass
 
+
 class plantuml(nodes.General, nodes.Element):
     pass
+
 
 def align(argument):
     align_values = ('left', 'center', 'right')
     return directives.choice(argument, align_values)
+
 
 class UmlDirective(Directive):
     """Directive to insert PlantUML markup
@@ -110,12 +109,11 @@ class UmlDirective(Directive):
 
         return [node]
 
+
 def _read_utf8(filename):
-    fp = codecs.open(filename, 'rb', 'utf-8')
-    try:
+    with codecs.open(filename, 'rb', 'utf-8') as fp:
         return fp.read()
-    finally:
-        fp.close()
+
 
 def generate_name(self, node, fileformat):
     h = hashlib.sha1()
@@ -127,10 +125,11 @@ def generate_name(self, node, fileformat):
     fname = 'plantuml-%s.%s' % (key, fileformat)
     imgpath = getattr(self.builder, 'imgpath', None)
     if imgpath:
-        return ('/'.join((self.builder.imgpath, fname)),
+        return (posixpath.join(self.builder.imgpath, fname),
                 os.path.join(self.builder.outdir, '_images', fname))
     else:
         return fname, os.path.join(self.builder.outdir, fname)
+
 
 _ARGS_BY_FILEFORMAT = {
     'eps': '-teps'.split(),
@@ -138,15 +137,22 @@ _ARGS_BY_FILEFORMAT = {
     'svg': '-tsvg'.split(),
     }
 
+
 def generate_plantuml_args(self, node, fileformat):
     if isinstance(self.builder.config.plantuml, (tuple, list)):
         args = list(self.builder.config.plantuml)
     else:
-        args = shlex.split(self.builder.config.plantuml)
+        if sys.platform == "win32":
+            args = shlex.split(
+                self.builder.config.plantuml.replace('\\', r'\\')
+            )
+        else:
+            args = shlex.split(self.builder.config.plantuml)
     args.extend('-pipe -charset utf-8'.split())
     args.extend(['-filename', node['filename']])
     args.extend(_ARGS_BY_FILEFORMAT[fileformat])
     return args
+
 
 def render_plantuml(self, node, fileformat):
     refname, outfname = generate_name(self, node, fileformat)
@@ -157,10 +163,16 @@ def render_plantuml(self, node, fileformat):
     f = open(outfname, 'wb')
     try:
         try:
-            p = subprocess.Popen(generate_plantuml_args(self, node, fileformat),
-                                 stdout=f, stdin=subprocess.PIPE,
-                                 stderr=subprocess.PIPE,
-                                 cwd=absincdir)
+            shell = sys.platform == 'win32' or False
+            args = generate_plantuml_args(self, node, fileformat)
+            p = subprocess.Popen(
+                args,
+                stdout=f,
+                stdin=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                shell=shell,
+                cwd=absincdir
+            )
         except OSError as err:
             if err.errno != ENOENT:
                 raise
@@ -173,6 +185,7 @@ def render_plantuml(self, node, fileformat):
     finally:
         f.close()
 
+
 def _get_png_tag(self, fnames, node):
     refname, outfname = fnames['png']
     alt = node.get('alt', node['uml'])
@@ -180,7 +193,7 @@ def _get_png_tag(self, fnames, node):
     # mimic StandaloneHTMLBuilder.post_process_images(). maybe we should
     # process images prior to html_vist.
     scale_keys = ('scale', 'width', 'height')
-    if all(key not in node for key in scale_keys) or Image is None:
+    if all(key not in node for key in scale_keys):
         return ('<img src="%s" alt="%s" />\n'
                 % (self.encode(refname), self.encode(alt)))
 
@@ -214,6 +227,7 @@ def _get_png_tag(self, fnames, node):
                self.encode(alt),
                self.encode('; '.join(styles))))
 
+
 def _get_svg_style(fname):
     f = open(fname)
     try:
@@ -232,6 +246,7 @@ def _get_svg_style(fname):
         return
     return m.group(1)
 
+
 def _get_svg_tag(self, fnames, node):
     refname, outfname = fnames['svg']
     return '\n'.join([
@@ -242,20 +257,22 @@ def _get_svg_tag(self, fnames, node):
         _get_png_tag(self, fnames, node),
         '</object>'])
 
+
 _KNOWN_HTML_FORMATS = {
     'png': (('png',), _get_png_tag),
     'svg': (('png', 'svg'), _get_svg_tag),
     }
 
+
 def html_visit_plantuml(self, node):
     try:
-        format = self.builder.config.plantuml_output_format
+        format_ = self.builder.config.plantuml_output_format
         try:
-            fileformats, gettag = _KNOWN_HTML_FORMATS[format]
+            fileformats, gettag = _KNOWN_HTML_FORMATS[format_]
         except KeyError:
             raise PlantUmlError(
                 'plantuml_output_format must be one of %s, but is %r'
-                % (', '.join(map(repr, _KNOWN_HTML_FORMATS)), format))
+                % (', '.join(map(repr, _KNOWN_HTML_FORMATS)), format_))
         # fnames: {fileformat: (refname, outfname), ...}
         fnames = dict((e, render_plantuml(self, node, e))
                       for e in fileformats)
@@ -268,11 +285,17 @@ def html_visit_plantuml(self, node):
     self.body.append('</p>\n')
     raise nodes.SkipNode
 
+
 def _convert_eps_to_pdf(self, refname, fname):
     if isinstance(self.builder.config.plantuml_epstopdf, (tuple, list)):
         args = list(self.builder.config.plantuml_epstopdf)
     else:
-        args = shlex.split(self.builder.config.plantuml_epstopdf)
+        if sys.platform == 'win32':
+            args = shlex.split(
+                self.builder.config.plantuml_epstopdf.replace('\\', r'\\')
+            )
+        else:
+            args = shlex.split(self.builder.config.plantuml_epstopdf)
     args.append(fname)
     try:
         try:
@@ -282,8 +305,12 @@ def _convert_eps_to_pdf(self, refname, fname):
             # workaround for missing shebang of epstopdf script
             if err.errno != getattr(errno, 'ENOEXEC', 0):
                 raise
-            p = subprocess.Popen(['bash'] + args, stdout=subprocess.PIPE,
-                                 stderr=subprocess.PIPE)
+            if sys.platform != 'win32':
+                p = subprocess.Popen(
+                    ['bash'] + args,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE
+                )
     except OSError as err:
         if err.errno != ENOENT:
             raise
@@ -294,21 +321,23 @@ def _convert_eps_to_pdf(self, refname, fname):
         raise PlantUmlError('error while running epstopdf\n\n' + serr)
     return refname[:-4] + '.pdf', fname[:-4] + '.pdf'
 
+
 _KNOWN_LATEX_FORMATS = {
     'eps': ('eps', lambda self, refname, fname: (refname, fname)),
     'pdf': ('eps', _convert_eps_to_pdf),
     'png': ('png', lambda self, refname, fname: (refname, fname)),
     }
 
+
 def latex_visit_plantuml(self, node):
     try:
-        format = self.builder.config.plantuml_latex_output_format
+        format_ = self.builder.config.plantuml_latex_output_format
         try:
-            fileformat, postproc = _KNOWN_LATEX_FORMATS[format]
+            fileformat, postproc = _KNOWN_LATEX_FORMATS[format_]
         except KeyError:
             raise PlantUmlError(
                 'plantuml_latex_output_format must be one of %s, but is %r'
-                % (', '.join(map(repr, _KNOWN_LATEX_FORMATS)), format))
+                % (', '.join(map(repr, _KNOWN_LATEX_FORMATS)), format_))
         refname, outfname = render_plantuml(self, node, fileformat)
         refname, outfname = postproc(self, refname, outfname)
     except PlantUmlError as err:
@@ -322,8 +351,11 @@ def latex_visit_plantuml(self, node):
         img_node['alt'] = node['uml']
     node.append(img_node)
 
+
+# noinspection PyUnusedLocal
 def latex_depart_plantuml(self, node):
     pass
+
 
 def pdf_visit_plantuml(self, node):
     try:
@@ -335,12 +367,15 @@ def pdf_visit_plantuml(self, node):
     rep = nodes.image(uri=outfname, alt=node.get('alt', node['uml']))
     node.parent.replace(node, rep)
 
+
 def setup(app):
     app.add_node(plantuml,
                  html=(html_visit_plantuml, None),
                  latex=(latex_visit_plantuml, latex_depart_plantuml))
     app.add_directive('uml', UmlDirective)
-    app.add_config_value('plantuml', 'plantuml', 'html')
+    private_plantuml = osp.join(osp.dirname(__file__), 'plantuml.jar')
+    plantuml_cmd = 'java -jar "{}"'.format(private_plantuml)
+    app.add_config_value('plantuml', plantuml_cmd, 'html')
     app.add_config_value('plantuml_output_format', 'png', 'html')
     app.add_config_value('plantuml_epstopdf', 'epstopdf', '')
     app.add_config_value('plantuml_latex_output_format', 'png', '')

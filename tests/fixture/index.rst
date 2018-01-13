@@ -55,3 +55,10 @@ width: 10px * 1000%:
    :height: 600px
 
    Foo <|-- Bar
+
+
+.. uml::
+
+   @startuml
+   version
+   @enduml

@@ -4,7 +4,8 @@ from setuptools import setup, find_packages
 
 long_desc = open('README.rst').read()
 
-requires = ['Sphinx>=1.1']
+requires = ['Sphinx>=1.1', 'Pillow', 'six', 'docutils']
+tests_require = ['pytest']
 
 setup(
     name='sphinxcontrib-plantuml',
@@ -30,7 +31,12 @@ setup(
     ],
     platforms='any',
     packages=find_packages(),
+    tests_require=tests_require,
     include_package_data=True,
     install_requires=requires,
+    extras_require=dict(
+        pdf=['rst2pdf'],
+        test=tests_require,
+    ),
     namespace_packages=['sphinxcontrib'],
 )
